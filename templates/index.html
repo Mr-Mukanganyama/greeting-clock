@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Greeting &amp; Live Clock</title>
+  <style>
+    :root {
+      --bg1: #4f46e5;
+      --bg2: #7c3aed;
+      --card: rgba(255, 255, 255, 0.12);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #fff;
+      background: linear-gradient(135deg, var(--bg1), var(--bg2));
+      padding: 20px;
+    }
+    .card {
+      background: var(--card);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 24px;
+      padding: 48px 40px;
+      text-align: center;
+      max-width: 480px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+    }
+    .greeting { font-size: 1.9rem; font-weight: 700; margin-bottom: 8px; }
+    .clock { font-size: 3.6rem; font-weight: 800; letter-spacing: 2px; margin: 16px 0; font-variant-numeric: tabular-nums; }
+    .date { font-size: 1.1rem; opacity: 0.9; margin-bottom: 28px; }
+    .badge {
+      display: inline-block;
+      font-size: 0.8rem;
+      padding: 8px 16px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.2);
+      opacity: 0.9;
+    }
+    .hint { margin-top: 22px; font-size: 0.82rem; opacity: 0.7; line-height: 1.5; }
+    code { background: rgba(0,0,0,0.25); padding: 1px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="greeting" id="greeting">{{ greeting }}, Brendon! 👋</div>
+    <div class="clock" id="clock">{{ time }}</div>
+    <div class="date" id="date">{{ date }}</div>
+    <span class="badge">⚡ Served live by a Flask backend on Render</span>
+    <p class="hint">
+      This clock updates every second by asking the server for the time
+      at <code>/api/time</code> — proof that real backend code is running,
+      not just a static page. Times are shown in UTC.
+    </p>
+  </div>
+
+  <script>
+    // Every second, ask the backend for the current time and update the page.
+    async function refresh() {
+      try {
+        const res = await fetch("/api/time");
+        const data = await res.json();
+        document.getElementById("greeting").textContent = data.greeting + ", Brendon! 👋";
+        document.getElementById("clock").textContent = data.time;
+        document.getElementById("date").textContent = data.date;
+      } catch (err) {
+        // If the request fails, just keep the last shown time.
+        console.error("Could not reach the server:", err);
+      }
+    }
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>
