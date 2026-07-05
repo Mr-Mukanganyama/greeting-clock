@@ -1,0 +1,9 @@
+# Render Blueprint — lets Render set up this service automatically.
+# You can also configure the same thing by hand in the Render dashboard.
+services:
+  - type: web
+    name: greeting-clock
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn app:app --bind 0.0.0.0:$PORT"
