@@ -1,0 +1,160 @@
+//@version=5
+// RSI Divergence + EMA Trend Filter Strategy
+//
+// Concept
+// -------
+// 1. Detect regular (and optionally hidden) RSI divergences using pivot points:
+//      - Regular bullish : price makes a lower low,  RSI makes a higher low   -> potential reversal up
+//      - Regular bearish : price makes a higher high, RSI makes a lower high  -> potential reversal down
+//      - Hidden bullish  : price makes a higher low,  RSI makes a lower low   -> trend continuation up
+//      - Hidden bearish  : price makes a lower high,  RSI makes a higher high -> trend continuation down
+// 2. Only take trades in the direction of the EMA trend filter:
+//      - Longs  allowed when fast EMA > slow EMA (and optionally price above the trend EMA)
+//      - Shorts allowed when fast EMA < slow EMA (and optionally price below the trend EMA)
+// 3. Exits via ATR-based stop loss / take profit, or on an opposite signal.
+//
+// Paste this file into the TradingView Pine Editor and click "Add to chart".
+
+strategy("RSI Divergence + EMA Strategy",
+     shorttitle   = "RSI Div + EMA",
+     overlay      = true,
+     initial_capital  = 10000,
+     default_qty_type = strategy.percent_of_equity,
+     default_qty_value = 10,
+     commission_type  = strategy.commission.percent,
+     commission_value = 0.05,
+     pyramiding   = 0,
+     calc_on_every_tick = false)
+
+// ================= Inputs =================
+grpRsi = "RSI / Divergence"
+rsiLen      = input.int(14,  "RSI Length",            minval = 2,  group = grpRsi)
+pivotLeft   = input.int(5,   "Pivot Lookback Left",   minval = 1,  group = grpRsi)
+pivotRight  = input.int(5,   "Pivot Lookback Right",  minval = 1,  group = grpRsi, tooltip = "Bars needed to confirm a pivot. Signals appear this many bars after the actual pivot.")
+rangeLower  = input.int(5,   "Min Bars Between Pivots", minval = 1, group = grpRsi)
+rangeUpper  = input.int(60,  "Max Bars Between Pivots", minval = 2, group = grpRsi)
+useRegular  = input.bool(true,  "Use Regular Divergence (reversal)",    group = grpRsi)
+useHidden   = input.bool(false, "Use Hidden Divergence (continuation)", group = grpRsi)
+
+grpEma = "EMA Trend Filter"
+useEmaFilter = input.bool(true, "Enable EMA Filter",  group = grpEma)
+emaFastLen   = input.int(50,   "Fast EMA Length",     minval = 1, group = grpEma)
+emaSlowLen   = input.int(200,  "Slow EMA Length",     minval = 1, group = grpEma)
+usePriceAboveEma = input.bool(true, "Also Require Price Beyond Slow EMA", group = grpEma, tooltip = "Longs need close > slow EMA, shorts need close < slow EMA.")
+
+grpRisk = "Risk Management"
+useAtrExits = input.bool(true, "Use ATR Stop Loss / Take Profit", group = grpRisk)
+atrLen      = input.int(14,    "ATR Length",          minval = 1,   group = grpRisk)
+slAtrMult   = input.float(2.0, "Stop Loss (ATR x)",   minval = 0.1, step = 0.1, group = grpRisk)
+tpAtrMult   = input.float(3.0, "Take Profit (ATR x)", minval = 0.1, step = 0.1, group = grpRisk)
+exitOnOpposite = input.bool(true, "Exit on Opposite Signal", group = grpRisk)
+
+grpSide = "Trade Direction"
+allowLongs  = input.bool(true, "Allow Longs",  group = grpSide)
+allowShorts = input.bool(true, "Allow Shorts", group = grpSide)
+
+// ================= Indicators =================
+rsi     = ta.rsi(close, rsiLen)
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+atr     = ta.atr(atrLen)
+
+// ================= Divergence Detection =================
+// Pivots on the RSI series; price is compared at the same bars.
+plFound = not na(ta.pivotlow(rsi, pivotLeft, pivotRight))
+phFound = not na(ta.pivothigh(rsi, pivotLeft, pivotRight))
+
+_inRange(cond) =>
+    bars = ta.barssince(cond[1])
+    rangeLower <= bars and bars <= rangeUpper
+
+// Values at the confirmed pivot bar (pivotRight bars ago)
+rsiAtPivot   = rsi[pivotRight]
+lowAtPivot   = low[pivotRight]
+highAtPivot  = high[pivotRight]
+
+// --- Regular bullish: price LL, RSI HL ---
+rsiHL   = rsiAtPivot > ta.valuewhen(plFound, rsiAtPivot, 1) and _inRange(plFound)
+priceLL = lowAtPivot < ta.valuewhen(plFound, lowAtPivot, 1)
+regularBull = useRegular and plFound and priceLL and rsiHL
+
+// --- Hidden bullish: price HL, RSI LL ---
+rsiLL   = rsiAtPivot < ta.valuewhen(plFound, rsiAtPivot, 1) and _inRange(plFound)
+priceHL = lowAtPivot > ta.valuewhen(plFound, lowAtPivot, 1)
+hiddenBull = useHidden and plFound and priceHL and rsiLL
+
+// --- Regular bearish: price HH, RSI LH ---
+rsiLH   = rsiAtPivot < ta.valuewhen(phFound, rsiAtPivot, 1) and _inRange(phFound)
+priceHH = highAtPivot > ta.valuewhen(phFound, highAtPivot, 1)
+regularBear = useRegular and phFound and priceHH and rsiLH
+
+// --- Hidden bearish: price LH, RSI HH ---
+rsiHH   = rsiAtPivot > ta.valuewhen(phFound, rsiAtPivot, 1) and _inRange(phFound)
+priceLH = highAtPivot < ta.valuewhen(phFound, highAtPivot, 1)
+hiddenBear = useHidden and phFound and priceLH and rsiHH
+
+bullDiv = regularBull or hiddenBull
+bearDiv = regularBear or hiddenBear
+
+// ================= Trend Filter =================
+longTrendOk  = not useEmaFilter or (emaFast > emaSlow and (not usePriceAboveEma or close > emaSlow))
+shortTrendOk = not useEmaFilter or (emaFast < emaSlow and (not usePriceAboveEma or close < emaSlow))
+
+longSignal  = allowLongs  and bullDiv and longTrendOk
+shortSignal = allowShorts and bearDiv and shortTrendOk
+
+// ================= Orders =================
+if longSignal and strategy.position_size <= 0
+    strategy.entry("Long", strategy.long)
+if shortSignal and strategy.position_size >= 0
+    strategy.entry("Short", strategy.short)
+
+// Opposite-signal exits (when not flipping directly into a new position)
+if exitOnOpposite
+    if strategy.position_size > 0 and bearDiv and not shortSignal
+        strategy.close("Long", comment = "Opposite Div")
+    if strategy.position_size < 0 and bullDiv and not longSignal
+        strategy.close("Short", comment = "Opposite Div")
+
+// ATR stop loss / take profit anchored to the average entry price
+var float longStop  = na
+var float longTp    = na
+var float shortStop = na
+var float shortTp   = na
+
+if strategy.position_size > 0 and strategy.position_size[1] <= 0
+    longStop := strategy.position_avg_price - atr * slAtrMult
+    longTp   := strategy.position_avg_price + atr * tpAtrMult
+if strategy.position_size < 0 and strategy.position_size[1] >= 0
+    shortStop := strategy.position_avg_price + atr * slAtrMult
+    shortTp   := strategy.position_avg_price - atr * tpAtrMult
+
+if useAtrExits
+    if strategy.position_size > 0
+        strategy.exit("Long Exit", from_entry = "Long", stop = longStop, limit = longTp)
+    if strategy.position_size < 0
+        strategy.exit("Short Exit", from_entry = "Short", stop = shortStop, limit = shortTp)
+
+// ================= Plotting =================
+plot(emaFast, "Fast EMA", color = color.new(color.orange, 0), linewidth = 2)
+plot(emaSlow, "Slow EMA", color = color.new(color.blue,   0), linewidth = 2)
+
+plotshape(longSignal,  "Bullish Divergence", style = shape.labelup,   location = location.belowbar,
+     color = color.new(color.green, 0), text = "Bull Div", textcolor = color.white, size = size.small)
+plotshape(shortSignal, "Bearish Divergence", style = shape.labeldown, location = location.abovebar,
+     color = color.new(color.red, 0),   text = "Bear Div", textcolor = color.white, size = size.small)
+
+// Faded markers for divergences filtered out by the EMA trend
+plotshape(bullDiv and not longSignal,  "Filtered Bull Div", style = shape.triangleup,
+     location = location.belowbar, color = color.new(color.green, 70), size = size.tiny)
+plotshape(bearDiv and not shortSignal, "Filtered Bear Div", style = shape.triangledown,
+     location = location.abovebar, color = color.new(color.red, 70),   size = size.tiny)
+
+// Active stop / target levels
+plot(strategy.position_size > 0 and useAtrExits ? longStop  : na, "Long Stop",   color.new(color.red,   40), 1, plot.style_linebr)
+plot(strategy.position_size > 0 and useAtrExits ? longTp    : na, "Long Target", color.new(color.green, 40), 1, plot.style_linebr)
+plot(strategy.position_size < 0 and useAtrExits ? shortStop : na, "Short Stop",  color.new(color.red,   40), 1, plot.style_linebr)
+plot(strategy.position_size < 0 and useAtrExits ? shortTp   : na, "Short Target",color.new(color.green, 40), 1, plot.style_linebr)
+
+// Subtle background tint for the prevailing EMA trend
+bgcolor(useEmaFilter ? (emaFast > emaSlow ? color.new(color.green, 95) : color.new(color.red, 95)) : na)
